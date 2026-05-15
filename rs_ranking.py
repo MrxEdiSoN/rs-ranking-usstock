@@ -1284,6 +1284,13 @@ def apply_range_filter(source,col,value_range,scale=1.0):
     if value_range is None or col not in source.columns:
         return source
     vals=pd.to_numeric(source[col],errors="coerce")/scale
+    full_vals=pd.to_numeric(df[col],errors="coerce")/scale
+    full_vals=full_vals.dropna()
+    if not full_vals.empty:
+        full_lo=float(full_vals.min())
+        full_hi=float(full_vals.max())
+        if abs(float(value_range[0])-full_lo)<1e-9 and abs(float(value_range[1])-full_hi)<1e-9:
+            return source
     return source[vals.between(value_range[0],value_range[1],inclusive="both")]
 
 view_df=df.copy()
