@@ -1242,6 +1242,13 @@ fbos_filter=st.multiselect(
     placeholder="全部",
     label_visibility="visible",
 )
+fbos_weeks_range=st.slider(
+    "週首次破結構距今週數",
+    min_value=0,
+    max_value=52,
+    value=(0,52),
+    step=1,
+)
 
 def numeric_filter(label,col,min_value=None,max_value=None,step=None,scale=1.0):
     if col not in df.columns:
@@ -1275,6 +1282,7 @@ with st.expander("欄位數值篩選",expanded=False):
         gm_range=numeric_filter("毛利率","GrossMargin",step=0.1)
         ni_range=numeric_filter("淨利潤","NetIncome",step=1.0)
         vol_range=numeric_filter("成交量比均20天","VolRatio",step=0.1)
+        avg_dollar_vol_range=numeric_filter("20D成交額(M)","AvgDollarVol20",step=0.1,scale=1_000_000)
         price_range=numeric_filter("股價","Price",step=0.1)
         cap_range=numeric_filter("市值(B)","CapNum",step=0.1,scale=1_000_000_000)
         dist_ath_range=numeric_filter("距ATH","DistATH",step=0.1)
@@ -1307,11 +1315,14 @@ if wma30_weeks_range!=(0,52):
     wma30_weeks=pd.to_numeric(view_df["WMA30_Weeks"],errors="coerce")
     view_df=view_df[wma30_weeks.between(wma30_weeks_range[0],wma30_weeks_range[1],inclusive="both")]
 if fbos_filter: view_df=view_df[view_df["FBOS_Label"].isin(fbos_filter)]
+if fbos_weeks_range!=(0,52):
+    fbos_weeks=pd.to_numeric(view_df["FBOS_Weeks"],errors="coerce")
+    view_df=view_df[fbos_weeks.between(fbos_weeks_range[0],fbos_weeks_range[1],inclusive="both")]
 for col,rng,scale in [
     ("RS_pct",rs_range,1.0),("DayChange",day_range,1.0),("ROC_1W",roc1w_range,1.0),
     ("ROC_3M",roc3m_range,1.0),("ROC_6M",roc6m_range,1.0),("ROC_12M",roc12m_range,1.0),
     ("EPS_QoQ",eps_range,1.0),("Rev_QoQ",rev_range,1.0),("GrossMargin",gm_range,1.0),
-    ("NetIncome",ni_range,1.0),("VolRatio",vol_range,1.0),("Price",price_range,1.0),
+    ("NetIncome",ni_range,1.0),("VolRatio",vol_range,1.0),("AvgDollarVol20",avg_dollar_vol_range,1_000_000),("Price",price_range,1.0),
     ("CapNum",cap_range,1_000_000_000),("DistATH",dist_ath_range,1.0),("Dist52H",dist_52h_range,1.0),
 ]:
     view_df=apply_range_filter(view_df,col,rng,scale)
@@ -1327,7 +1338,7 @@ total_rows = len(view_df)
 total_pages = max(1, (total_rows + PAGE_SIZE - 1) // PAGE_SIZE)
 if "page" not in st.session_state: st.session_state["page"] = 1
 # 篩選條件變動時重置到第1頁
-filter_key = f"{tab}_{search}_{cap_sel}_{idx_f}_{sel_sec}_{wma30_filter}_{wma30_weeks_range}_{fbos_filter}_{rs_range}_{day_range}_{roc1w_range}_{roc3m_range}_{roc6m_range}_{roc12m_range}_{eps_range}_{rev_range}_{gm_range}_{ni_range}_{vol_range}_{price_range}_{cap_range}_{dist_ath_range}_{dist_52h_range}_{sort_col}_{sort_asc}"
+filter_key = f"{tab}_{search}_{cap_sel}_{idx_f}_{sel_sec}_{wma30_filter}_{wma30_weeks_range}_{fbos_filter}_{fbos_weeks_range}_{rs_range}_{day_range}_{roc1w_range}_{roc3m_range}_{roc6m_range}_{roc12m_range}_{eps_range}_{rev_range}_{gm_range}_{ni_range}_{vol_range}_{avg_dollar_vol_range}_{price_range}_{cap_range}_{dist_ath_range}_{dist_52h_range}_{sort_col}_{sort_asc}"
 if st.session_state.get("filter_key") != filter_key:
     st.session_state["page"] = 1
     st.session_state["filter_key"] = filter_key
