@@ -1,0 +1,43 @@
+name: Update RS daily dataset
+
+on:
+  schedule:
+    # Hong Kong 07:00 = UTC 23:00 on the previous day.
+    - cron: "0 23 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-rs-daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build daily RS dataset
+        run: python rs_ranking.py --build-daily
+
+      - name: Commit data files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/latest/*.parquet data/latest/*.txt data/daily/*.parquet
+          if git diff --cached --quiet; then
+            echo "No data changes to commit."
+          else
+            git commit -m "data: update daily RS dataset"
+            git push
+          fi
