@@ -1,4 +1,4 @@
-"""
+﻿"""
 RS Ranking — NASDAQ v14
 安裝：pip install streamlit yfinance pandas requests plotly lxml html5lib
 執行：streamlit run rs_ranking.py
@@ -15,6 +15,11 @@ from pathlib import Path
 
 APP_DIR=Path(__file__).resolve().parent
 DATA_DIR=APP_DIR/"data"
+DATASET_OPTIONS={
+    "全美精選": "quality",
+    "全美上市": "us_all",
+    "NASDAQ": "nasdaq",
+}
 
 st.set_page_config(page_title="RS Ranking — NASDAQ", page_icon="📈", layout="wide")
 st.markdown("""
@@ -877,14 +882,16 @@ def _read_parquet(path):
     if not path.exists(): return None
     return pd.read_parquet(path)
 
-def save_analysis_outputs(df,sp500,ndx,as_of=None):
+def save_analysis_outputs(df,sp500,ndx,as_of=None,dataset_key="quality"):
     as_of=as_of or datetime.now().strftime("%Y-%m-%d")
     latest_dir=DATA_DIR/"latest"
-    daily_dir=DATA_DIR/"daily"
-    _write_parquet(df,latest_dir/"rs_latest.parquet")
+    daily_dir=DATA_DIR/"daily"/dataset_key
+    latest_name="rs_latest.parquet" if dataset_key=="quality" else f"rs_latest_{dataset_key}.parquet"
+    meta_name="meta.parquet" if dataset_key=="quality" else f"meta_{dataset_key}.parquet"
+    _write_parquet(df,latest_dir/latest_name)
     _write_parquet(df,daily_dir/f"{as_of}.parquet")
-    meta=pd.DataFrame([{"as_of":as_of,"updated_at":datetime.now().isoformat(timespec="seconds"),"rows":len(df)}])
-    _write_parquet(meta,latest_dir/"meta.parquet")
+    meta=pd.DataFrame([{"as_of":as_of,"updated_at":datetime.now().isoformat(timespec="seconds"),"rows":len(df),"dataset":dataset_key}])
+    _write_parquet(meta,latest_dir/meta_name)
     (latest_dir/"sp500.txt").write_text("\n".join(sorted(sp500)),encoding="utf-8")
     (latest_dir/"ndx100.txt").write_text("\n".join(sorted(ndx)),encoding="utf-8")
     cutoff=datetime.now()-timedelta(days=190)
@@ -929,8 +936,10 @@ def load_precomputed_bar_data(ticker):
         for _,r in rows.iterrows()
     ]
 
-def load_precomputed_outputs():
-    df=_read_parquet(DATA_DIR/"latest"/"rs_latest.parquet")
+def load_precomputed_outputs(dataset_key="quality"):
+    latest_name="rs_latest.parquet" if dataset_key=="quality" else f"rs_latest_{dataset_key}.parquet"
+    meta_name="meta.parquet" if dataset_key=="quality" else f"meta_{dataset_key}.parquet"
+    df=_read_parquet(DATA_DIR/"latest"/latest_name)
     if df is None: return None
     fundamentals=_read_parquet(DATA_DIR/"latest"/"fundamentals_latest.parquet")
     if fundamentals is not None and "Ticker" in fundamentals.columns:
@@ -949,7 +958,7 @@ def load_precomputed_outputs():
     ndx_path=DATA_DIR/"latest"/"ndx100.txt"
     if sp_path.exists(): sp500=set(sp_path.read_text(encoding="utf-8").splitlines())
     if ndx_path.exists(): ndx=set(ndx_path.read_text(encoding="utf-8").splitlines())
-    meta=_read_parquet(DATA_DIR/"latest"/"meta.parquet")
+    meta=_read_parquet(DATA_DIR/"latest"/meta_name)
     updated=""
     if meta is not None and not meta.empty:
         updated=str(meta.iloc[0].get("updated_at",""))
@@ -1060,26 +1069,29 @@ def run_analysis(max_stocks,min_cap_b,universe,min_price,min_avg_dollar_vol_m,mi
     return df,hist_map,sepa_map,sp500,ndx
 
 def build_daily_dataset():
-    result=run_analysis(
-        max_stocks=8000,
-        min_cap_b=1,
-        universe="全美上市",
-        min_price=10.0,
-        min_avg_dollar_vol_m=10.0,
-        min_listing_years=1,
-        exclude_etf=True,
-        exclude_warrant=True,
-        exclude_unit=True,
-        exclude_preferred=True,
-        exclude_right=True,
-        include_fundamentals=False,
-        ui=False,
-    )
-    if not result:
-        raise SystemExit("daily dataset build failed")
-    df,_,_,sp500,ndx=result
-    save_analysis_outputs(df,sp500,ndx)
-    print(f"saved daily dataset: {len(df)} rows")
+    datasets=[
+        ("quality",{"max_stocks":8000,"min_cap_b":1,"universe":"全美上市","min_price":10.0,"min_avg_dollar_vol_m":10.0,"min_listing_years":1}),
+        ("us_all",{"max_stocks":8000,"min_cap_b":0,"universe":"全美上市","min_price":0.0,"min_avg_dollar_vol_m":0.0,"min_listing_years":0}),
+        ("nasdaq",{"max_stocks":8000,"min_cap_b":0,"universe":"NASDAQ","min_price":0.0,"min_avg_dollar_vol_m":0.0,"min_listing_years":0}),
+    ]
+    for dataset_key,params in datasets:
+        print(f"building dataset: {dataset_key}")
+        result=run_analysis(
+            exclude_etf=True,
+            exclude_warrant=True,
+            exclude_unit=True,
+            exclude_preferred=True,
+            exclude_right=True,
+            include_fundamentals=False,
+            ui=False,
+            **params,
+        )
+        if not result:
+            print(f"WARNING: {dataset_key} dataset build failed")
+            continue
+        df,_,_,sp500,ndx=result
+        save_analysis_outputs(df,sp500,ndx,dataset_key=dataset_key)
+        print(f"saved {dataset_key} dataset: {len(df)} rows")
 
 def build_fundamentals_dataset():
     bundle=load_precomputed_outputs()
@@ -1146,13 +1158,20 @@ today_str=datetime.today().strftime("%Y%m%d")
 st.markdown(f'<div class="top-bar"><div class="top-title">📈 RS Ranking — NASDAQ</div><div style="color:#555;font-size:11px">資料日期：{today_str}</div></div>',unsafe_allow_html=True)
 
 st.sidebar.header("⚙️ 設定")
-universe=st.sidebar.selectbox("股票池",["NASDAQ","全美上市"],index=0)
+dataset_label=st.sidebar.selectbox("資料包",list(DATASET_OPTIONS.keys()),index=0)
+dataset_key=DATASET_OPTIONS[dataset_label]
+if st.session_state.get("dataset_key")!=dataset_key:
+    for k in ("df","hist_map","sepa_map","sp500","ndx","updated"):
+        st.session_state.pop(k,None)
+    st.session_state["dataset_key"]=dataset_key
+    st.rerun()
+universe=st.sidebar.selectbox("手動分析股票池",["NASDAQ","全美上市"],index=1)
 min_cap_b=st.sidebar.selectbox("最低市值篩選",[0,0.3,0.5,1,2,5,10],format_func=lambda x:"不限" if x==0 else f"≥ ${x}B",index=3)
 min_price=st.sidebar.number_input("最低股價",min_value=0.0,value=10.0,step=1.0)
 min_avg_dollar_vol_m=st.sidebar.number_input("20日平均成交額(M)",min_value=0.0,value=10.0,step=1.0)
 min_listing_years=st.sidebar.slider("最低上市年期",0,10,1,1)
 max_stocks=st.sidebar.slider("最多分析股票數",50,8000,300,50)
-st.sidebar.caption("全美上市會包含 NASDAQ / NYSE / AMEX；RS 只用通過下方清洗條件的股票計算。")
+st.sidebar.caption("資料包切換會讀 GitHub Actions 預計算結果；下方條件只影響手動重新分析。")
 with st.sidebar.expander("排除品種",expanded=True):
     exclude_etf=st.checkbox("ETF / Fund / Trust",value=True)
     exclude_warrant=st.checkbox("Warrant",value=True)
@@ -1174,14 +1193,14 @@ if st.sidebar.button("🚀 開始 / 更新分析",type="primary"):
         st.rerun()
 
 if "df" not in st.session_state:
-    precomputed=load_precomputed_outputs()
+    precomputed=load_precomputed_outputs(st.session_state.get("dataset_key","quality"))
     if precomputed:
         st.session_state["df"]=precomputed[0]; st.session_state["hist_map"]=precomputed[1]
         st.session_state["sepa_map"]=precomputed[2]; st.session_state["sp500"]=precomputed[3]
         st.session_state["ndx"]=precomputed[4]; st.session_state["updated"]=precomputed[5]
         st.session_state["sort_col"]="RS_pct"; st.session_state["sort_asc"]=False
         st.rerun()
-    st.info("👈 暫無 GitHub 預計算資料；可先點擊左側「開始/更新分析」以載入數據")
+    st.info(f"👈 暫無「{dataset_label}」GitHub 預計算資料；可先點擊左側「開始/更新分析」以載入數據，或先執行 GitHub Actions")
     show_tech_notes(); st.stop()
 
 df=st.session_state["df"]; hist_map=st.session_state["hist_map"]
@@ -1190,7 +1209,7 @@ if "sort_col" not in st.session_state: st.session_state["sort_col"]="RS_pct"
 if "sort_asc" not in st.session_state: st.session_state["sort_asc"]=False
 
 tab=st.radio("",["📊 全部 RS",f"⭐ SEPA 入選 ({int(df['SEPA'].sum())})"],horizontal=True,label_visibility="collapsed")
-st.caption(f"更新時間：{st.session_state.get('updated','')} | 共分析 {len(df)} 支")
+st.caption(f"資料包：{dataset_label} | 更新時間：{st.session_state.get('updated','')} | 共分析 {len(df)} 支")
 
 cf1,cf2,cf3,cf4=st.columns([2,2,2,4])
 with cf1: search=st.text_input("",placeholder="搜尋代碼…",label_visibility="collapsed")
