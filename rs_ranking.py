@@ -1,4 +1,4 @@
-﻿"""
+"""
 RS Ranking — NASDAQ v14
 安裝：pip install streamlit yfinance pandas requests plotly lxml html5lib
 執行：streamlit run rs_ranking.py
