@@ -35,7 +35,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          git stash push --include-untracked data/latest data/daily || true
           git pull --rebase origin main
+          git stash pop || true
 
           git add data/latest/*.parquet data/latest/*.txt data/daily/*.parquet
           if git diff --cached --quiet; then
