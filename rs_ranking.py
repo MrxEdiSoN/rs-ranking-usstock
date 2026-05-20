@@ -57,7 +57,16 @@ html,body,[class*="css"]{background-color:#0a0a0f!important;color:#e0e0e0!import
 .strategy-card ul{margin:0;padding-left:18px;color:#d1d5db;font-size:13px;line-height:1.9;}
 .strategy-card li{margin-bottom:3px;}
 .strategy-note{background:#111827;border:1px solid #243044;border-radius:4px;padding:14px 16px;color:#9ca3af;font-size:12px;line-height:1.8;margin-top:8px;}
+.market-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:8px 0 14px 0;}
+.market-pill{background:#0f172a;border:1px solid #1e293b;border-left:3px solid #555;border-radius:4px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
+.market-pill.ok{border-left-color:#22c55e;}
+.market-pill.bad{border-left-color:#ef4444;}
+.market-symbol{font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:900;color:#fff;}
+.market-label{font-size:10px;color:#555;letter-spacing:1.4px;margin-top:2px;}
+.market-value{font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:900;text-align:right;}
+.market-sub{font-size:11px;color:#888;text-align:right;margin-top:2px;}
 @media (max-width:900px){.strategy-grid{grid-template-columns:1fr;}}
+@media (max-width:700px){.market-grid{grid-template-columns:1fr;}}
 .stTextInput input{background:#1a1a2e!important;border:1px solid #2d2d4e!important;color:#e0e0e0!important;border-radius:4px!important;font-size:12px!important;}
 div[data-testid="stSidebarContent"]{background:#0f0f1a!important;}
 </style>
@@ -916,6 +925,73 @@ def add_sector_rs(df):
     out["SectorRS"]=out["Sector"].astype(str).map(sector_rs)
     return out
 
+@st.cache_data(ttl=1800)
+def get_market_ma200(symbol):
+    try:
+        hist=yf.download(symbol,period="1y",auto_adjust=True,progress=False,threads=False)
+        if hist.empty:
+            return None
+        if isinstance(hist.columns,pd.MultiIndex):
+            if ("Close",symbol) in hist.columns:
+                close=hist[("Close",symbol)].squeeze().dropna()
+            elif "Close" in hist.columns.get_level_values(0):
+                close=hist.xs("Close",axis=1,level=0).iloc[:,0].squeeze().dropna()
+            else:
+                return None
+        elif "Close" in hist.columns:
+            close=hist["Close"].squeeze().dropna()
+        else:
+            return None
+        if len(close)<200:
+            return None
+        price=float(close.iloc[-1])
+        ma200=float(close.rolling(200).mean().iloc[-1])
+        if ma200<=0:
+            return None
+        dist=(price/ma200-1)*100
+        return {
+            "symbol":symbol,
+            "price":round(price,2),
+            "ma200":round(ma200,2),
+            "above":price>ma200,
+            "dist":round(dist,2),
+            "date":pd.to_datetime(close.index[-1]).strftime("%Y-%m-%d"),
+        }
+    except:
+        return None
+
+def market_ma_card(symbol):
+    data=get_market_ma200(symbol)
+    if not data:
+        return f"""
+<div class="market-pill bad">
+  <div><div class="market-symbol">{symbol}</div><div class="market-label">MA200 STATUS</div></div>
+  <div><div class="market-value" style="color:#ef4444">N/A</div><div class="market-sub">無法取得資料</div></div>
+</div>
+"""
+    cls="ok" if data["above"] else "bad"
+    color="#22c55e" if data["above"] else "#ef4444"
+    status="> MA200" if data["above"] else "< MA200"
+    sign="+" if data["dist"]>=0 else ""
+    return f"""
+<div class="market-pill {cls}">
+  <div>
+    <div class="market-symbol">{symbol}</div>
+    <div class="market-label">CLOSE {status}</div>
+  </div>
+  <div>
+    <div class="market-value" style="color:{color}">{sign}{data["dist"]:.2f}%</div>
+    <div class="market-sub">${data["price"]:.2f} / MA200 ${data["ma200"]:.2f}</div>
+  </div>
+</div>
+"""
+
+def show_market_ma_filter():
+    st.markdown(
+        '<div class="market-grid">'+market_ma_card("SPY")+market_ma_card("QQQ")+"</div>",
+        unsafe_allow_html=True,
+    )
+
 # ══════════════════════════════════════════════════════════════
 # 個股詳細面板
 # ══════════════════════════════════════════════════════════════
@@ -1354,6 +1430,7 @@ if page_tab=="🧭 策略描述":
 
 tab=st.radio("",["📊 全部 RS",f"⭐ SEPA 入選 ({int(df['SEPA'].sum())})"],horizontal=True,label_visibility="collapsed")
 st.caption(f"資料包：{dataset_label} | 更新時間：{st.session_state.get('updated','')} | 共分析 {len(df)} 支")
+show_market_ma_filter()
 
 cf1,cf2,cf3,cf4=st.columns([2,2,2,4])
 with cf1: search=st.text_input("",placeholder="搜尋代碼…",label_visibility="collapsed")
