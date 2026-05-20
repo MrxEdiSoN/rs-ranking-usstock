@@ -51,6 +51,13 @@ html,body,[class*="css"]{background-color:#0a0a0f!important;color:#e0e0e0!import
 .tech-box h4{color:#00d4aa;font-size:13px;margin:0 0 8px 0;letter-spacing:1px;}
 .tech-box ul{margin:4px 0;padding-left:20px;}
 .tech-box li{margin-bottom:4px;}
+.strategy-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0 18px 0;}
+.strategy-card{background:#0f172a;border:1px solid #1e293b;border-left:3px solid #00d4aa;border-radius:4px;padding:16px;min-height:136px;}
+.strategy-card h4{color:#00d4aa;font-size:12px;letter-spacing:1.4px;margin:0 0 10px 0;text-transform:uppercase;}
+.strategy-card ul{margin:0;padding-left:18px;color:#d1d5db;font-size:13px;line-height:1.9;}
+.strategy-card li{margin-bottom:3px;}
+.strategy-note{background:#111827;border:1px solid #243044;border-radius:4px;padding:14px 16px;color:#9ca3af;font-size:12px;line-height:1.8;margin-top:8px;}
+@media (max-width:900px){.strategy-grid{grid-template-columns:1fr;}}
 .stTextInput input{background:#1a1a2e!important;border:1px solid #2d2d4e!important;color:#e0e0e0!important;border-radius:4px!important;font-size:12px!important;}
 div[data-testid="stSidebarContent"]{background:#0f0f1a!important;}
 </style>
@@ -547,6 +554,39 @@ def calc_ath_and_52w(hist):
         return dist_ath,dist_52h,dist_52l,bool(dist_ath>=-0.5),bool(dist_52h>=-0.5)
     except: return None,None,None,False,False
 
+def calc_daily_swingl_atr_stop(hist):
+    try:
+        if hist is None or hist.empty or not {"High","Low","Close"}.issubset(hist.columns):
+            return None,None,None
+        high=hist["High"].squeeze().dropna()
+        low=hist["Low"].squeeze().dropna()
+        close=hist["Close"].squeeze().dropna()
+        d=pd.concat([high,low,close],axis=1,join="inner").dropna()
+        d.columns=["High","Low","Close"]
+        if len(d)<20:
+            return None,None,None
+        prev_close=d["Close"].shift(1)
+        tr=pd.concat([
+            d["High"]-d["Low"],
+            (d["High"]-prev_close).abs(),
+            (d["Low"]-prev_close).abs(),
+        ],axis=1).max(axis=1)
+        atr=tr.rolling(14).mean().iloc[-1]
+        if pd.isna(atr):
+            return None,None,None
+        swing_l=None
+        lows=d["Low"].values
+        for i in range(len(d)-2,0,-1):
+            if lows[i]<lows[i-1] and lows[i]<lows[i+1]:
+                swing_l=float(lows[i])
+                break
+        if swing_l is None:
+            return None,round(float(atr),2),None
+        stop=swing_l-float(atr)
+        return round(swing_l,2),round(float(atr),2),round(stop,2)
+    except:
+        return None,None,None
+
 # ══════════════════════════════════════════════════════════════
 # 格式化
 # ══════════════════════════════════════════════════════════════
@@ -633,6 +673,12 @@ def cap_fmt(n):
 def ma_badge(v):
     if v is None: return '<span class="neu">—</span>'
     return '<span style="color:#22c55e">✅</span>' if v else '<span style="color:#ef4444">❌</span>'
+
+def fmt_price(v):
+    val=pd.to_numeric(pd.Series([v]),errors="coerce").iloc[0]
+    if pd.isna(val):
+        return '<span class="neu">—</span>'
+    return f'<span style="color:#e0e0e0">${val:.2f}</span>'
 
 def idx_col(tkr,sp500,ndx):
     b=""
@@ -786,6 +832,89 @@ RS Rating：O'Neil ≥80 ｜ Minervini ≥90 ｜ 突破成交量 ≥均量40%<br
 停損：-7%~-8%（O'Neil）｜ -10%~-15%（Minervini）
 </div>
 """,unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════
+# 策略描述
+# ══════════════════════════════════════════════════════════════
+def show_strategy_description():
+    st.markdown("""
+<div style="border-left:3px solid #00d4aa;padding-left:12px;margin:4px 0 14px 0">
+  <div style="font-size:11px;color:#555;letter-spacing:2px">STRATEGY PLAYBOOK</div>
+  <div style="font-size:22px;font-weight:900;color:#fff;margin-top:4px">RS Momentum / Minervini Structure</div>
+</div>
+<div class="strategy-grid">
+  <div class="strategy-card">
+    <h4>市場濾網</h4>
+    <ul>
+      <li><b>SPY &gt; MA200</b>：只在大盤位於 200MA 上方時啟動進攻模式。</li>
+      <li><b>SPY &lt; MA200</b>：不入市，等待環境重新轉強。</li>
+    </ul>
+  </div>
+  <div class="strategy-card">
+    <h4>強度條件</h4>
+    <ul>
+      <li><b>個股 RS Rating ≥ 92</b>。</li>
+      <li><b>Sector RS ≥ 70</b>，避免在弱板塊中找強股。</li>
+      <li>優先選擇 RS 領先、接近高位、結構乾淨的股票。</li>
+    </ul>
+  </div>
+  <div class="strategy-card">
+    <h4>Minervini 篩選</h4>
+    <ul>
+      <li>符合 SEPA / Minervini 趨勢模板。</li>
+      <li>價格位於關鍵均線上方，長期均線呈上升趨勢。</li>
+      <li>配合突破、回測或週線 BOS 結構尋找入場點。</li>
+    </ul>
+  </div>
+  <div class="strategy-card">
+    <h4>初始止損</h4>
+    <ul>
+      <li>日線 <b>SwingL - 1ATR</b> 作為初始止損。</li>
+      <li>用結構低點定義失效位置，避免只用固定百分比。</li>
+    </ul>
+  </div>
+  <div class="strategy-card">
+    <h4>持倉管理</h4>
+    <ul>
+      <li>第二次 <b>weekly BOS</b> 後，止損推到 <b>breakeven</b>。</li>
+      <li>達到 <b>5R</b> 後，改用日線 SwingL trailing。</li>
+      <li>讓強勢股有空間延伸，同時保護已累積利潤。</li>
+    </ul>
+  </div>
+  <div class="strategy-card">
+    <h4>出場與風險</h4>
+    <ul>
+      <li><b>RS &lt; 75</b>：視為相對強度失效，執行出場或降風險。</li>
+      <li><b>單筆風險 1.0%</b>：保守模式。</li>
+      <li><b>單筆風險 1.5%</b>：進取模式。</li>
+    </ul>
+  </div>
+</div>
+<div class="strategy-note">
+流程摘要：先確認 SPY 在 MA200 上方；若 SPY 低於 MA200 則不入市。市場濾網通過後，再找 RS ≥ 92 且 Sector RS ≥ 70 的 Minervini 型強勢股；
+入場後以日線 SwingL - 1ATR 控制初始風險，第二次 weekly BOS 後保本，5R 後用日線 SwingL 追蹤，
+若 RS 跌破 75 則退出。
+</div>
+""",unsafe_allow_html=True)
+
+def add_sector_rs(df):
+    out=df.copy()
+    if "SectorRS" in out.columns:
+        return out
+    valid=out.copy()
+    valid["SectorClean"]=valid["Sector"].astype(str)
+    valid=valid[~valid["SectorClean"].isin(["N/A","nan","None",""])]
+    if valid.empty or "RS_raw" not in valid.columns:
+        out["SectorRS"]=None
+        return out
+    sector_score=valid.groupby("SectorClean")["RS_raw"].median().sort_values(ascending=False)
+    n=len(sector_score)
+    if n<=1:
+        sector_rs={sec:99 for sec in sector_score.index}
+    else:
+        sector_rs={sec:int(round((n-rank-1)/(n-1)*99)) for rank,sec in enumerate(sector_score.index)}
+    out["SectorRS"]=out["Sector"].astype(str).map(sector_rs)
+    return out
 
 # ══════════════════════════════════════════════════════════════
 # 個股詳細面板
@@ -950,6 +1079,7 @@ def load_precomputed_outputs(dataset_key="quality"):
         ("EPS_QoQ",None),("Rev_QoQ",None),("GrossMargin",None),("NetIncome",None),
         ("EPS_Sig","—"),("Rev_Sig","—"),("GM_Sig","—"),("NI_Sig","—"),
         ("EPS_Accel",0),("Rev_Accel",0),("GM_Accel",0),("NI_Accel",0),
+        ("DailySwingL",None),("ATR14",None),("SL_1ATR",None),
     ]:
         if col not in df.columns: df[col]=default
     sp500=set()
@@ -1015,6 +1145,7 @@ def run_analysis(max_stocks,min_cap_b,universe,min_price,min_avg_dollar_vol_m,mi
                     wma30_status,wma30_weeks=check_weekly_ma30_status(hist)
                     fbos_label,fbos_weeks,fbos_swing_h=find_fbos_fcoch(hist,wma30_status,wma30_weeks)
                     dist_ath,dist_52h,dist_52l,near_ath,near_52h=calc_ath_and_52w(hist)
+                    daily_swing_l,atr14,sl_1atr=calc_daily_swingl_atr_stop(hist)
                     vol_ratio=calc_volume_ratio(hist)
                     row=nasdaq_df[nasdaq_df["Ticker"]==tkr]
                     cap_num=row["MarketCapNum"].values[0] if not row.empty else None
@@ -1034,7 +1165,8 @@ def run_analysis(max_stocks,min_cap_b,universe,min_price,min_avg_dollar_vol_m,mi
                         "ROC_6M":calc_roc(hist,126),"ROC_9M":calc_roc(hist,189),
                         "ROC_12M":calc_roc(hist,252),
                         "DistATH":dist_ath,"Dist52H":dist_52h,"Dist52L":dist_52l,
-                        "NearATH":near_ath,"Near52H":near_52h,"VolRatio":vol_ratio,"hist":hist,
+                        "NearATH":near_ath,"Near52H":near_52h,"VolRatio":vol_ratio,
+                        "DailySwingL":daily_swing_l,"ATR14":atr14,"SL_1ATR":sl_1atr,"hist":hist,
                     })
                 except: continue
         except Exception as e: status.warning(f"批次錯誤：{e}")
@@ -1203,10 +1335,22 @@ if "df" not in st.session_state:
     st.info(f"👈 暫無「{dataset_label}」GitHub 預計算資料；可先點擊左側「開始/更新分析」以載入數據，或先執行 GitHub Actions")
     show_tech_notes(); st.stop()
 
-df=st.session_state["df"]; hist_map=st.session_state["hist_map"]
+df=add_sector_rs(st.session_state["df"]); hist_map=st.session_state["hist_map"]
 sepa_map=st.session_state["sepa_map"]; sp500=st.session_state["sp500"]; ndx=st.session_state["ndx"]
 if "sort_col" not in st.session_state: st.session_state["sort_col"]="RS_pct"
 if "sort_asc" not in st.session_state: st.session_state["sort_asc"]=False
+
+page_tab=st.radio(
+    "",
+    ["📊 RS 排名","🧭 策略描述"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="page_tab",
+)
+if page_tab=="🧭 策略描述":
+    show_strategy_description()
+    show_tech_notes()
+    st.stop()
 
 tab=st.radio("",["📊 全部 RS",f"⭐ SEPA 入選 ({int(df['SEPA'].sum())})"],horizontal=True,label_visibility="collapsed")
 st.caption(f"資料包：{dataset_label} | 更新時間：{st.session_state.get('updated','')} | 共分析 {len(df)} 支")
@@ -1270,6 +1414,7 @@ with st.expander("欄位數值篩選",expanded=False):
     rf1,rf2,rf3=st.columns(3)
     with rf1:
         rs_range=st.slider("RS Rating",0,99,(0,99),1)
+        sector_rs_range=st.slider("Sector RS",0,99,(0,99),1)
         day_range=numeric_filter("當日漲幅","DayChange",step=0.1)
         roc1w_range=numeric_filter("近1週","ROC_1W",step=0.1)
         roc3m_range=numeric_filter("3M ROC","ROC_3M",step=0.1)
@@ -1319,7 +1464,7 @@ if fbos_weeks_range!=(0,52):
     fbos_weeks=pd.to_numeric(view_df["FBOS_Weeks"],errors="coerce")
     view_df=view_df[fbos_weeks.between(fbos_weeks_range[0],fbos_weeks_range[1],inclusive="both")]
 for col,rng,scale in [
-    ("RS_pct",rs_range,1.0),("DayChange",day_range,1.0),("ROC_1W",roc1w_range,1.0),
+    ("RS_pct",rs_range,1.0),("SectorRS",sector_rs_range,1.0),("DayChange",day_range,1.0),("ROC_1W",roc1w_range,1.0),
     ("ROC_3M",roc3m_range,1.0),("ROC_6M",roc6m_range,1.0),("ROC_12M",roc12m_range,1.0),
     ("EPS_QoQ",eps_range,1.0),("Rev_QoQ",rev_range,1.0),("GrossMargin",gm_range,1.0),
     ("NetIncome",ni_range,1.0),("VolRatio",vol_range,1.0),("AvgDollarVol20",avg_dollar_vol_range,1_000_000),("Price",price_range,1.0),
@@ -1338,7 +1483,7 @@ total_rows = len(view_df)
 total_pages = max(1, (total_rows + PAGE_SIZE - 1) // PAGE_SIZE)
 if "page" not in st.session_state: st.session_state["page"] = 1
 # 篩選條件變動時重置到第1頁
-filter_key = f"{tab}_{search}_{cap_sel}_{idx_f}_{sel_sec}_{wma30_filter}_{wma30_weeks_range}_{fbos_filter}_{fbos_weeks_range}_{rs_range}_{day_range}_{roc1w_range}_{roc3m_range}_{roc6m_range}_{roc12m_range}_{eps_range}_{rev_range}_{gm_range}_{ni_range}_{vol_range}_{avg_dollar_vol_range}_{price_range}_{cap_range}_{dist_ath_range}_{dist_52h_range}_{sort_col}_{sort_asc}"
+filter_key = f"{tab}_{search}_{cap_sel}_{idx_f}_{sel_sec}_{wma30_filter}_{wma30_weeks_range}_{fbos_filter}_{fbos_weeks_range}_{rs_range}_{sector_rs_range}_{day_range}_{roc1w_range}_{roc3m_range}_{roc6m_range}_{roc12m_range}_{eps_range}_{rev_range}_{gm_range}_{ni_range}_{vol_range}_{avg_dollar_vol_range}_{price_range}_{cap_range}_{dist_ath_range}_{dist_52h_range}_{sort_col}_{sort_asc}"
 if st.session_state.get("filter_key") != filter_key:
     st.session_state["page"] = 1
     st.session_state["filter_key"] = filter_key
@@ -1366,7 +1511,7 @@ header="""<div class="table-wrap"><table class="rs-table"><thead><tr>
 <th>近1週</th><th>3M ROC</th><th>6M ROC</th><th>12M ROC</th>
 <th>EPS季增率</th><th>營收季增率</th><th>毛利率</th><th>淨利潤</th>
 <th>成交量比均20天</th><th>20D成交額</th><th>距ATH</th><th>距52W高</th>
-<th>PRICE</th><th>市值</th><th>SECTOR</th>
+<th>PRICE</th><th>SL-1ATR</th><th>ATR14</th><th>市值</th><th>SECTOR</th><th>SECTOR RS</th>
 </tr></thead><tbody>"""
 
 # 分頁切片
@@ -1379,6 +1524,8 @@ for rank_i,(_,r) in enumerate(page_df.iterrows(), page_start+1):
     sepa_b='<span class="sepa-badge">SEPA</span>' if r["SEPA"] else ""
     ticker=str(r["Ticker"])
     sec=str(r["Sector"]); sec="—" if sec in ("N/A","nan","None","") else sec[:18]
+    sector_rs=r.get("SectorRS")
+    sector_rs_html='<span class="neu">—</span>' if pd.isna(sector_rs) else rs_bar(sector_rs)
     rows+=(f'<tr>'
            f'<td style="color:#555">{rank_i}</td>'
            f'<td><span class="ticker-tag">{ticker}</span>{sepa_b}</td>'
@@ -1401,8 +1548,11 @@ for rank_i,(_,r) in enumerate(page_df.iterrows(), page_start+1):
            f'<td>{fmt_ath(r["DistATH"],r["NearATH"])}</td>'
            f'<td>{fmt_52h(r["Dist52H"],r["Near52H"])}</td>'
            f'<td style="color:#e0e0e0">${r["Price"]}</td>'
+           f'<td>{fmt_price(r.get("SL_1ATR"))}</td>'
+           f'<td>{fmt_price(r.get("ATR14"))}</td>'
            f'<td style="color:#555">{cap_fmt(r["CapNum"])}</td>'
            f'<td style="color:#555;font-size:11px">{sec}</td>'
+           f'<td>{sector_rs_html}</td>'
            f'</tr>')
 
 st.markdown(header+rows+"</tbody></table></div>",unsafe_allow_html=True)
