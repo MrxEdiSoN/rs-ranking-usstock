@@ -554,6 +554,57 @@ def find_fbos_fcoch(hist, wma30_status, wma30_weeks):
     except:
         return "-",None,None
 
+def find_lchoch(hist,wma30_status,wma30_weeks):
+    """
+    LChoCH：
+    W-MA30 突破/回測事件週之後，往左找事件週之前最近的週線 SwingH；
+    事件週之後第一個日線收盤站上該 SwingH，即視為 LChoCH。
+    """
+    try:
+        if wma30_status not in ("突破","回測"): return "-",None,None
+        if wma30_weeks is None: return "-",None,None
+        c=hist["Close"].squeeze(); hi=hist["High"].squeeze(); lo=hist["Low"].squeeze()
+        c.index=pd.to_datetime(c.index); hi.index=pd.to_datetime(hi.index); lo.index=pd.to_datetime(lo.index)
+        wc=c.resample("W").last().dropna()
+        wh=hi.resample("W").max().dropna()
+        wl=lo.resample("W").min().dropna()
+        wc,wh=wc.align(wh,join="inner")
+        wl=wl.reindex(wc.index); wh=wh.reindex(wc.index)
+        n=len(wc)
+        if n<5: return "-",None,None
+        wh_arr=wh.values
+        latest_i=n-1
+        try:
+            event_weeks=int(round(float(wma30_weeks)))
+        except:
+            return "-",None,None
+        event_i=latest_i-event_weeks
+        if event_i<2 or event_i>latest_i: return "-",None,None
+
+        swing_h_i=None
+        for k in range(event_i-1,0,-1):
+            if wh_arr[k]>wh_arr[k-1] and wh_arr[k]>wh_arr[k+1]:
+                swing_h_i=k
+                break
+        if swing_h_i is None:
+            return "-",None,None
+        swing_h=round(float(wh_arr[swing_h_i]),2)
+
+        event_week_end=pd.Timestamp(wc.index[event_i])
+        future_close=c[c.index>event_week_end].dropna()
+        if future_close.empty:
+            return "待突破",None,swing_h
+        triggered=future_close[future_close>swing_h]
+        if triggered.empty:
+            return "待突破",None,swing_h
+        trigger_date=pd.Timestamp(triggered.index[0])
+        trigger_week=trigger_date.to_period("W").end_time.normalize()
+        latest_week=pd.Timestamp(wc.index[-1]).to_period("W").end_time.normalize()
+        weeks_ago=max(0,int(round((latest_week-trigger_week).days/7)))
+        return "LChoCH",weeks_ago,swing_h
+    except:
+        return "-",None,None
+
 def calc_ath_and_52w(hist):
     try:
         c=hist["Close"].squeeze(); price=c.iloc[-1]; ath=c.max()
@@ -664,6 +715,16 @@ def fmt_fbos(label,weeks_ago,swing_h):
         return f'<span style="color:#888">待突破{sub_str}</span>{price_str}'
     if "待出現SwingL" in label:
         return '<span style="color:#888">待出現<span style="color:#60a5fa;font-weight:600">SwingL</span></span>'
+    return '<span class="neu">—</span>'
+
+def fmt_lchoch(label,weeks_ago,swing_h):
+    if label=="LChoCH":
+        wk='<span style="background:#60a5fa22;border:1px solid #60a5fa;color:#60a5fa;padding:1px 5px;border-radius:3px;font-size:10px;margin-left:3px">本週</span>' if weeks_ago==0 else f'<span style="color:#888;font-size:10px"> {weeks_ago}週前</span>' if weeks_ago is not None else ""
+        price_str=f'<span style="color:#888;font-size:10px"> ${swing_h}</span>' if swing_h else ""
+        return f'<span style="background:#14b8a622;border:1px solid #14b8a6;color:#14b8a6;padding:1px 6px;border-radius:3px;font-size:11px;font-weight:600">LChoCH</span>{wk}{price_str}'
+    if label=="待突破":
+        price_str=f'<span style="color:#f59e0b"> ${swing_h}</span>' if swing_h else ""
+        return f'<span style="color:#888">待突破</span>{price_str}'
     return '<span class="neu">—</span>'
 
 def rs_bar(pct):
@@ -1025,6 +1086,7 @@ def show_stock_detail(ticker,hist,sepa_conds,df_row,sp500,ndx):
     dist_52l=df_row.get("Dist52L"); near_ath=df_row.get("NearATH",False); near_52h=df_row.get("Near52H",False)
     wma30_status=df_row.get("WMA30_Status","-"); wma30_weeks=df_row.get("WMA30_Weeks",None)
     fbos_label=df_row.get("FBOS_Label","-"); fbos_weeks=df_row.get("FBOS_Weeks",None); fbos_swing_h=df_row.get("FBOS_SwingH",None)
+    lchoch_label=df_row.get("LChoCH_Label","-"); lchoch_weeks=df_row.get("LChoCH_Weeks",None); lchoch_swing_h=df_row.get("LChoCH_SwingH",None)
     st.markdown("<br>",unsafe_allow_html=True)
     for (label,val_html),col in zip(
         [("距歷史高位",fmt_ath(dist_ath,near_ath)),
@@ -1032,8 +1094,9 @@ def show_stock_detail(ticker,hist,sepa_conds,df_row,sp500,ndx):
          ("距52週低點",f'<span style="color:#22c55e">{dist_52l:+.1f}%</span>' if dist_52l else "—"),
          ("W>MA30",ma_badge(df_row.get("WeeklyMA30"))),
          ("W-MA30狀態",fmt_wma30_status(wma30_status,wma30_weeks)),
-         ("週首次破結構",fmt_fbos(fbos_label,fbos_weeks,fbos_swing_h))],
-        st.columns(6)):
+         ("週首次破結構",fmt_fbos(fbos_label,fbos_weeks,fbos_swing_h)),
+         ("LChoCH",fmt_lchoch(lchoch_label,lchoch_weeks,lchoch_swing_h))],
+        st.columns(7)):
         with col:
             st.markdown(f'<div style="background:#0f172a;border:1px solid #1e293b;padding:10px;border-radius:4px;text-align:center"><div style="font-size:10px;color:#555;margin-bottom:4px">{label}</div><div style="font-size:14px;font-weight:700">{val_html}</div></div>',unsafe_allow_html=True)
     st.markdown('<div style="border-left:3px solid #00d4aa;padding-left:12px;margin:20px 0 8px 0"><span style="font-size:11px;letter-spacing:2px;color:#555">// SEPA 條件檢查</span></div>',unsafe_allow_html=True)
@@ -1156,6 +1219,7 @@ def load_precomputed_outputs(dataset_key="quality"):
         ("EPS_Sig","—"),("Rev_Sig","—"),("GM_Sig","—"),("NI_Sig","—"),
         ("EPS_Accel",0),("Rev_Accel",0),("GM_Accel",0),("NI_Accel",0),
         ("DailySwingL",None),("ATR14",None),("SL_1ATR",None),
+        ("LChoCH_Label","-"),("LChoCH_Weeks",None),("LChoCH_SwingH",None),
     ]:
         if col not in df.columns: df[col]=default
     sp500=set()
@@ -1220,6 +1284,7 @@ def run_analysis(max_stocks,min_cap_b,universe,min_price,min_avg_dollar_vol_m,mi
                     wma30=check_weekly_ma30(hist)
                     wma30_status,wma30_weeks=check_weekly_ma30_status(hist)
                     fbos_label,fbos_weeks,fbos_swing_h=find_fbos_fcoch(hist,wma30_status,wma30_weeks)
+                    lchoch_label,lchoch_weeks,lchoch_swing_h=find_lchoch(hist,wma30_status,wma30_weeks)
                     dist_ath,dist_52h,dist_52l,near_ath,near_52h=calc_ath_and_52w(hist)
                     daily_swing_l,atr14,sl_1atr=calc_daily_swingl_atr_stop(hist)
                     vol_ratio=calc_volume_ratio(hist)
@@ -1233,6 +1298,7 @@ def run_analysis(max_stocks,min_cap_b,universe,min_price,min_avg_dollar_vol_m,mi
                         "SEPA":sepa_ok,"SEPA_conds":sepa_conds,"WeeklyMA30":wma30,
                         "WMA30_Status":wma30_status,"WMA30_Weeks":wma30_weeks,
                         "FBOS_Label":fbos_label,"FBOS_Weeks":fbos_weeks,"FBOS_SwingH":fbos_swing_h,
+                        "LChoCH_Label":lchoch_label,"LChoCH_Weeks":lchoch_weeks,"LChoCH_SwingH":lchoch_swing_h,
                         "SP500":tkr in sp500,"NDX100":tkr in ndx,
                         "Price":round(latest_price,2),
                         "AvgDollarVol20":avg_dollar_vol,
@@ -1584,7 +1650,7 @@ for (ck,cl),bc in zip(sortable,btn_cols):
 
 header="""<div class="table-wrap"><table class="rs-table"><thead><tr>
 <th>#</th><th>代碼</th><th>指數</th><th>當日漲幅</th>
-<th>RS RATING</th><th>W&gt;MA30</th><th>W-MA30狀態</th><th>週首次破結構</th>
+<th>RS RATING</th><th>W&gt;MA30</th><th>W-MA30狀態</th><th>週首次破結構</th><th>LChoCH</th>
 <th>近1週</th><th>3M ROC</th><th>6M ROC</th><th>12M ROC</th>
 <th>EPS季增率</th><th>營收季增率</th><th>毛利率</th><th>淨利潤</th>
 <th>成交量比均20天</th><th>20D成交額</th><th>距ATH</th><th>距52W高</th>
@@ -1612,6 +1678,7 @@ for rank_i,(_,r) in enumerate(page_df.iterrows(), page_start+1):
            f'<td>{ma_badge(r["WeeklyMA30"])}</td>'
            f'<td>{fmt_wma30_status(r["WMA30_Status"],r["WMA30_Weeks"])}</td>'
            f'<td>{fmt_fbos(r["FBOS_Label"],r["FBOS_Weeks"],r["FBOS_SwingH"])}</td>'
+           f'<td>{fmt_lchoch(r.get("LChoCH_Label","-"),r.get("LChoCH_Weeks"),r.get("LChoCH_SwingH"))}</td>'
            f'<td>{fmt_roc(r["ROC_1W"])}</td>'
            f'<td>{fmt_roc(r["ROC_3M"])}</td>'
            f'<td>{fmt_roc(r["ROC_6M"])}</td>'
